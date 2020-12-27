@@ -29,15 +29,17 @@ class Transform(Generic[InputType, OutputType]):
         NOTE: Maybe later if some transforms create tuples, like SIMCLR, or if
         they also create labels (like dicts) or somethings, then we probably
         will have to change this.
-
-        TODO: To push this idea even further, we could change this so it also
-        accepts a gym.Space, and return a gym.Space!
+        TODO: Remove this and transition everything in the SL side to based on 
+        gym spaces, rather than just n_classes/img_shapes/etc.
         """
         # Default to saying that this transform doesn't affect the shape.
         return input_shape
     
     def space_change(self, input_space: gym.Space) -> gym.Space:
         """ Gives the impact this transform would have on an input gym.Space.
+
+        TODO: Remove this, instead have the transforms actually support spaces
+        as inputs.
         """
         def _get_shape(space: gym.Space) -> Tuple:
             if isinstance(space, spaces.Box):

@@ -38,7 +38,8 @@ from continuum.datasets import *
 from continuum.datasets import _ContinuumDataset
 from continuum.scenarios.base import _BaseCLLoader
 from continuum.tasks import split_train_val
-from gym import spaces
+from gym import spaces, Space
+from gym.spaces import Discrete
 from pytorch_lightning import LightningModule, Trainer
 from simple_parsing import choice, list_field
 from torch import Tensor
@@ -46,6 +47,7 @@ from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
 
 from sequoia.common import ClassificationMetrics, Metrics, get_metrics
+from sequoia.common.spaces import Image
 from sequoia.common.config import Config
 from sequoia.common.loss import Loss
 from sequoia.common.spaces import Sparse
@@ -61,44 +63,46 @@ from ..passive_environment import PassiveEnvironment, Actions, ActionType, Obser
 
 logger = get_logger(__file__)
 
-num_classes_in_dataset: Dict[str, int] = {
-    "mnist": 10,
-    "fashionmnist": 10,
-    "kmnist": 10,
-    "emnist": 10,
-    "qmnist": 10,
-    "mnistfellowship": 30,
-    "cifar10": 10,
-    "cifar100": 100,
-    "cifarfellowship": 110,
-    "imagenet100": 100,
-    "imagenet1000": 1000,
-    "permutedmnist": 10,
-    "rotatedmnist": 10,
-    "core50": 50,
-    "core50-v2-79": 50,
-    "core50-v2-196": 50,
-    "core50-v2-391": 50,
+# Dict that maps from a dataset to the observation, action, and reward spaces
+# for that dataset.
+spaces: Dict[str, Tuple[Space, Space, Space]] = {
+    "mnist": Discrete(10),
+    "fashionmnist": Discrete(10),
+    "kmnist": Discrete(10),
+    "emnist": Discrete(10),
+    "qmnist": Discrete(10),
+    "mnistfellowship": Discrete(30),
+    "cifar10": Discrete(10),
+    "cifar100": Discrete(100),
+    "cifarfellowship": Discrete(110),
+    "imagenet100": Discrete(100),
+    "imagenet1000": Discrete(1000),
+    "permutedmnist": Discrete(10),
+    "rotatedmnist": Discrete(10),
+    "core50": Discrete(50),
+    "core50-v2-79": Discrete(50),
+    "core50-v2-196": Discrete(50),
+    "core50-v2-391": Discrete(50),
 }
 
 dims_for_dataset: Dict[str, Tuple[int, int, int]] = {
-    "mnist": (28, 28, 1),
-    "fashionmnist": (28, 28, 1),
-    "kmnist": (28, 28, 1),
-    "emnist": (28, 28, 1),
-    "qmnist": (28, 28, 1),
-    "mnistfellowship": (28, 28, 1),
-    "cifar10": (32, 32, 3),
-    "cifar100": (32, 32, 3),
-    "cifarfellowship": (32, 32, 3),
-    "imagenet100": (224, 224, 3),
-    "imagenet1000": (224, 224, 3),
-    # "permutedmnist": (28, 28, 1),
-    # "rotatedmnist": (28, 28, 1),
-    "core50": (224, 224, 3),
-    "core50-v2-79": (224, 224, 3),
-    "core50-v2-196": (224, 224, 3),
-    "core50-v2-391": (224, 224, 3),
+    "mnist": Image(0, 1, (28, 28, 1)),
+    "fashionmnist": Image(0, 1, (28, 28, 1)),
+    "kmnist": Image(0, 1, (28, 28, 1)),
+    "emnist": Image(0, 1, (28, 28, 1)),
+    "qmnist": Image(0, 1, (28, 28, 1)),
+    "mnistfellowship": Image(0, 1, (28, 28, 1)),
+    "cifar10": Image(0, 1, (32, 32, 3)),
+    "cifar100": Image(0, 1, (32, 32, 3)),
+    "cifarfellowship": Image(0, 1, (32, 32, 3)),
+    "imagenet100": Image(0, 1, (224, 224, 3)),
+    "imagenet1000": Image(0, 1, (224, 224, 3)),
+    # "permutedmnist": Image(0, 1, (28, 28, 1)),
+    # "rotatedmnist": Image(0, 1, (28, 28, 1)),
+    "core50": Image(0, 1, (224, 224, 3)),
+    "core50-v2-79": Image(0, 1, (224, 224, 3)),
+    "core50-v2-196": Image(0, 1, (224, 224, 3)),
+    "core50-v2-391": Image(0, 1, (224, 224, 3)),
 }
 
 

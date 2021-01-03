@@ -8,35 +8,53 @@ https://medium.com/deeplearningmadeeasy/advantage-actor-critic-a2c-implementatio
 """
 
 from dataclasses import dataclass
-from typing import Dict, Tuple, Union, Optional
+from typing import Dict, List, Optional, Tuple, Union
 
 import gym
 import numpy as np
 import torch
 from gym import spaces
 from gym.spaces.utils import flatdim
+from sequoia.common import Loss
+from sequoia.common.layers import Flatten, Lambda
+from sequoia.settings import ContinualRLSetting
+from sequoia.settings.base.objects import Actions, Observations, Rewards
+from sequoia.utils import get_logger
+from sequoia.utils.generic_functions import get_slice
+from sequoia.utils.utils import prod
 from torch import LongTensor, Tensor, nn
+from torch.nn import functional as F
 from torch.optim.optimizer import Optimizer
 
-from sequoia.common.layers import Lambda, Flatten
-from sequoia.common import Loss
-from sequoia.settings.base.objects import Actions, Observations, Rewards
-from sequoia.settings import ContinualRLSetting
-from sequoia.utils.utils import prod
-from sequoia.utils import get_logger
-
 from ...forward_pass import ForwardPass
-from ..classification_head import ClassificationOutput, ClassificationHead
-from .policy_head import PolicyHead, PolicyHeadOutput, Categorical
+from ..classification_head import ClassificationHead, ClassificationOutput
+from .policy_head import Categorical, PolicyHead, PolicyHeadOutput
+
 logger = get_logger(__file__)
 
-class ActorCriticHead(ClassificationHead):
+
+@dataclass(frozen=True)
+class A2CHeadOutput(PolicyHeadOutput):
+    """ Output produced by the A2C output head. """
+    # The value estimate coming from the critic.
+    value: Tensor
+
+    @classmethod
+    def stack(cls, items: List["A2CHeadOutput"]) -> "A2CHeadOutput":
+        """TODO: Add a classmethod to 'stack' these objects. """
+
+
+class ActorCriticHead(PolicyHead):
     
     @dataclass
-    class HParams(ClassificationHead.HParams):
+    class HParams(PolicyHead.HParams):
         """ Hyper-parameters of the Actor-Critic head. """
         gamma: float = 0.95
-        learning_rate: float = 1e-3
+
+
+        actor_loss_coef: float = 0.5
+        critic_loss_coef: float = 0.5
+        entropy_loss_coef: float = 0.1
 
     def __init__(self,
                  input_space: spaces.Space,
@@ -80,9 +98,6 @@ class ActorCriticHead(ClassificationHead):
         self._previous_state: Optional[Tensor] = None
         self._step = 0
 
-        self.optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.hparams.learning_rate)
-        self.optimizer_critic = torch.optim.Adam(self.critic.parameters(), lr=self.hparams.learning_rate)
-
     def forward(self,
                 observations: ContinualRLSetting.Observations,
                 representations: Tensor) -> PolicyHeadOutput:
@@ -93,11 +108,9 @@ class ActorCriticHead(ClassificationHead):
         if len(representations.shape) != 2:
             representations = representations.reshape([-1, self.actor_input_dims])
         
-        self._previous_state = self._current_state
-        self._current_state = representations
-        
         # TODO: Actually implement the actor-critic forward pass.
         # predicted_reward = self.critic([state, action])
+        value = self.critic(representations)
         # Do we want to detach the representations? or not?
         
         logits = self.actor(representations)
@@ -109,33 +122,92 @@ class ActorCriticHead(ClassificationHead):
         else:
             sample = action_dist.sample()
 
-        actions = PolicyHeadOutput(
+        actions = A2CHeadOutput(
             y_pred=sample,
             logits=logits,
             action_dist=action_dist,
+            value=value,
         )
         return actions
-  
+
     def get_loss(self,
                  forward_pass: ForwardPass,
-                 actions: PolicyHeadOutput,
+                 actions: A2CHeadOutput,
                  rewards: ContinualRLSetting.Rewards) -> Loss:
+        if not self.representations:
+            self.batch_size = forward_pass.batch_size
+            self.create_buffers()
+        
         action_dist: Categorical = actions.action_dist
-
+        critic_value = actions.value
         rewards = rewards.to(device=actions.device)
         env_reward = torch.as_tensor(rewards.y, device=actions.device)
-
         observations: ContinualRLSetting.Observations = forward_pass.observations
-        done = observations.done
-        assert done is not None, "Need the end-of-episode signal!"
-        done = torch.as_tensor(done, device=actions.device)
-        assert self._current_state is not None
-        if self._previous_state is None:
-            # Only allow this once!
-            assert self._step == 0
-            self._previous_state = self._current_state
-        self._step += 1
+        assert observations.done is not None, "Need the end-of-episode signal!"
+        done = torch.as_tensor(observations.done, device=actions.device)
+        
+        representations = forward_pass.representations
 
+        total_loss = Loss(self.name)
+
+        critic_loss_tensor = torch.zeros(1).type_as(representations)
+        actor_loss_tensor = torch.zeros(1).type_as(representations)
+        entropy_loss_tensor = torch.zeros(1).type_as(representations)
+        for env_index, env_done in enumerate(done):
+            if env_done:
+                env_representations, env_actions, env_rewards = self.stack_buffers(env_index)
+                # TODO: Make sure this is correct, do the final 'rewards' match
+                # what we'd expect them to?
+                # todo: might need to detach all representations apart from the last one?
+                env_values = self.critic(env_representations.detach())
+                env_returns = self.get_returns(env_rewards.y, gamma=self.hparams.gamma)
+
+                critic_loss_tensor += F.mse_loss(env_values, env_returns.type_as(env_values).reshape(env_values.shape))
+
+                self.clear_buffers(env_index)
+
+            # Add stuff to the buffers for this env.
+            # Take a slice across the first dimension
+            current_representations = representations[env_index]
+            current_actions = get_slice(actions, env_index)
+            current_rewards = get_slice(rewards, env_index)
+            
+            self.representations[env_index].append(current_representations)
+            self.actions[env_index].append(current_actions)
+            self.rewards[env_index].append(current_rewards)
+
+            # Get the last N items from that env (from the buffers)
+            # TODO: I don't think it makes sense to calculate a critic loss like
+            # this when we just had the `done` signal, right? Should we enforce
+            # some kind of restriction on the number of steps to have?
+            env_representations, env_actions, env_rewards = self.stack_buffers(env_index)
+            env_values = self.critic(env_representations)
+
+            env_returns = self.get_returns(env_rewards.y, gamma=self.hparams.gamma).type_as(env_values)
+
+            env_advantages = env_returns - env_values
+            env_log_probs: Tensor = actions.action_log_prob
+            actor_loss_tensor += (-env_log_probs * env_advantages.detach()).mean()
+
+            # Just to make sure that the operation is differentiable if needed.
+            assert actions.y_pred_log_prob.requires_grad == actor_loss_tensor.requires_grad
+
+            critic_loss_tensor += F.mse_loss(env_values.reshape(env_returns.shape), env_returns)
+
+            entropy_loss_tensor += - current_actions.action_dist.entropy()
+
+
+        critic_loss = Loss("critic", critic_loss_tensor)
+        actor_loss = Loss("actor", actor_loss_tensor)
+        entropy_loss = Loss("entropy", entropy_loss_tensor)            
+
+        total_loss = Loss(self.name)
+        total_loss += self.hparams.actor_loss_coef * actor_loss
+        total_loss += self.hparams.critic_loss_coef * critic_loss
+        total_loss += self.hparams.entropy_loss_coef * entropy_loss
+        self.detach_all_buffers()
+        
+        return total_loss
         # TODO: Need to detach something here, right?
         advantage: Tensor = (
             env_reward
@@ -144,26 +216,17 @@ class ActorCriticHead(ClassificationHead):
         )
         
         total_loss = Loss(self.name)
-        if self.training:
-            self.optimizer_critic.zero_grad()
+
         critic_loss_tensor = (advantage ** 2).mean()
         critic_loss = Loss("critic", loss=critic_loss_tensor)
-        if self.training:
-            critic_loss_tensor.backward()
-            self.optimizer_critic.step()
-            
-        total_loss += critic_loss.detach()
 
-        if self.training:
-            self.optimizer.zero_grad()
+        total_loss += critic_loss
+
         actor_loss_tensor = - action_dist.log_prob(actions.action) * advantage.detach()
         actor_loss_tensor = actor_loss_tensor.mean()
         actor_loss = Loss("actor", loss=actor_loss_tensor)
-        if self.training:
-            actor_loss_tensor.backward()
-            self.optimizer.step()
-
-        total_loss += actor_loss.detach()
+        
+        total_loss += actor_loss
 
         return total_loss
 

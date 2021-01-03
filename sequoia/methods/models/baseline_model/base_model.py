@@ -426,12 +426,11 @@ class BaseModel(LightningModule, Generic[SettingType]):
 
     def preprocess_observations(self, observations: Observations) -> Observations:
         assert isinstance(observations, self.Observations)
-        return observations
+        # return observations
         # TODO: Make sure this also works in the supervised setting.
         from sequoia.utils.generic_functions import to_tensor
-        # tensor_observations = to_tensor(self.observation_space, observations, device=self.device)
-        # assert isinstance(tensor_observations, self.Observations)
-
+        tensor_observations = to_tensor(self.observation_space, observations, device=self.device)
+        assert isinstance(tensor_observations, self.Observations)
         return tensor_observations
 
     def preprocess_rewards(self, reward: Rewards) -> Rewards:

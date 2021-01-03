@@ -286,32 +286,3 @@ from  gym.vector.utils.numpy_utils import concatenate
 #         key, concatenate(subspace, [item.get(key) for item in items], out=out[key])
 #         ) for (key, subspace) in space.spaces.items()
 #     ])
-
-from sequoia.utils.generic_functions.to_from_tensor import to_tensor
-from torch import Tensor
-import torch
-
-@to_tensor.register(Sparse)
-def sparse_sample_to_tensor(space: Sparse,
-                            sample: Union[Optional[Any], np.ndarray],
-                            device: torch.device = None) -> Optional[Union[Tensor, np.ndarray]]:
-    if space.sparsity == 1.:
-        if isinstance(space.base, spaces.MultiDiscrete):
-            assert all(v == None for v in sample)
-            return np.array([
-                None if v == None else v for v in sample
-            ])
-        if sample is not None:
-            assert isinstance(sample, np.ndarray) and sample.dtype == np.object
-            assert not sample.shape
-        return None
-    if space.sparsity == 0.:
-        # Do we need to convert dtypes here though?
-        return to_tensor(space.base, sample, device)
-    # 0 < sparsity < 1
-    if isinstance(sample, np.ndarray) and sample.dtype == np.object:
-        return np.array([
-            None if v == None else v for v in sample
-        ])
-
-    assert False, (space, sample)

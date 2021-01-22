@@ -18,8 +18,7 @@ which the following 'addons' get added:
     Adds methods for adding self-supervised losses to the model using different
     Auxiliary Tasks.
 """
-from .base_hparams import BaseHParams, available_encoders, available_optimizers
-from .base_model import BaseModel
+from .base_model import BaseModel, available_encoders, available_optimizers
 from .class_incremental_model import ClassIncrementalModel
 from .self_supervised_model import SelfSupervisedModel
 from .semi_supervised_model import SemiSupervisedModel

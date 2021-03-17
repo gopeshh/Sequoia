@@ -23,7 +23,7 @@ def has_channels_last(img_or_shape: Union[Img, Tuple[int, ...], spaces.Box]) -> 
     the channels last format.
     """
     shape = getattr(img_or_shape, "shape", img_or_shape)
-    return len(shape) and shape[-1] in {1, 3}
+    return len(shape) in {3, 4} and shape[-1] in {1, 3}
 
 
 def has_channels_first(img_or_shape: Union[Img, Tuple[int, ...], spaces.Box]) -> bool:
@@ -31,7 +31,7 @@ def has_channels_first(img_or_shape: Union[Img, Tuple[int, ...], spaces.Box]) ->
     the channels first format.
     """
     shape = getattr(img_or_shape, "shape", img_or_shape)
-    return len(shape) and shape[0 if len(shape) == 3 else 1] in {1, 3}
+    return len(shape) in {3, 4} and shape[0 if len(shape) == 3 else 1] in {1, 3}
 
 
 def channels_last_if_needed(x: Any) -> Any:

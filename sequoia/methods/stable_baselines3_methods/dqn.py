@@ -13,6 +13,7 @@ from stable_baselines3.dqn import DQN
 
 from sequoia.common.hparams import categorical, log_uniform, uniform
 from sequoia.common.transforms import ChannelsFirst
+from sequoia.common.transforms.channels import has_channels_last
 from sequoia.methods import register_method
 from sequoia.settings.active import ContinualRLSetting
 from sequoia.utils.logging_utils import get_logger
@@ -88,7 +89,7 @@ class DQNMethod(StableBaselines3Method):
     hparams: DQNModel.HParams = mutable_field(DQNModel.HParams)
 
     # Approximate limit on the size of the replay buffer, in megabytes.
-    max_buffer_size_megabytes: float = 50.
+    max_buffer_size_megabytes: float = 2048.
 
     def configure(self, setting: ContinualRLSetting):
         super().configure(setting)
@@ -180,7 +181,8 @@ class DQNMethod(StableBaselines3Method):
     ) -> ContinualRLSetting.Actions:
         obs = observations.x
         # Temp fix for monsterkong and DQN:
-        if obs.shape == (64, 64, 3):
+        # For some reason, the predict function expects to get channels first input.
+        if has_channels_last(obs):
             obs = ChannelsFirst.apply(obs)
         predictions = self.model.predict(obs)
         action, _ = predictions
